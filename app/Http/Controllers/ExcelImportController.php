@@ -57,7 +57,20 @@ class ExcelImportController extends Controller
                 $fp = fopen($csvFullPath, 'w');
                 fputs($fp, chr(0xEF) . chr(0xBB) . chr(0xBF));
                 
+                $dim = $xlsx->dimension($sheetIndex);
+                $cols = $dim[0] ?? 0;
+                
+                // Get header length from first row as fallback
+                $firstRow = null;
+                
                 foreach ($xlsx->readRows($sheetIndex) as $r) {
+                    if ($firstRow === null) {
+                        $firstRow = $r;
+                        $cols = max($cols, count($r));
+                    }
+                    if (count($r) < $cols) {
+                        $r = array_pad($r, $cols, '');
+                    }
                     fputcsv($fp, $r);
                 }
                 fclose($fp);
@@ -121,7 +134,7 @@ class ExcelImportController extends Controller
 
         // Calculate total rows by seeking to the end of the file
         $file->seek(PHP_INT_MAX);
-        $totalLines = $file->key();
+        $totalLines = $file->key() + 1;
         $totalDataRows = max(0, $totalLines - 2);
 
         $totalPages = max(1, (int) ceil($totalDataRows / $limit));
@@ -134,11 +147,16 @@ class ExcelImportController extends Controller
         $previewRows = [];
         $count = 0;
         
+        $headerCount = isset($headers[0]) ? count($headers[0]) : 0;
+        
         while (!$file->eof() && $count < $limit) {
             $row = $file->current();
             // SplFileObject returns false or empty array on empty lines
             if ($row && (count($row) > 1 || (count($row) === 1 && $row[0] !== null))) {
-                $previewRows[$file->key()] = $row;
+                if ($headerCount > 0 && count($row) < $headerCount) {
+                    $row = array_pad($row, $headerCount, '');
+                }
+                $previewRows[] = $row;
                 $count++;
             }
             $file->next();
@@ -186,19 +204,100 @@ class ExcelImportController extends Controller
                 }
             }
         }
-
+        
         if (empty($csvPaths)) {
             return back()->withErrors(['error' => 'ไม่พบข้อมูลให้ดำเนินการ หรือไฟล์หมดอายุ']);
         }
 
-        $totalDataRows = 0;
+        $totalInserted = 0;
+        $skippedSheets = [];
+        
         foreach ($csvPaths as $csvPath) {
-            $file = new SplFileObject($csvPath, 'r');
-            $file->seek(PHP_INT_MAX);
-            $totalDataRows += max(0, $file->key() - 2);
+            $fName = basename($csvPath);
+            $extractedSheet = str_replace([$baseFilename . '_Sh_', '.csv'], '', $fName);
+            
+            $file = new \SplFileObject($csvPath, 'r');
+            $file->setFlags(\SplFileObject::READ_CSV | \SplFileObject::READ_AHEAD | \SplFileObject::SKIP_EMPTY | \SplFileObject::DROP_NEW_LINE);
+            
+            // Read first line to detect format
+            $file->seek(0);
+            $headerRow1 = $file->current();
+            
+            $tableName = null;
+            
+            // Auto-detect logic
+            if ($headerRow1 && is_array($headerRow1) && count($headerRow1) > 5) {
+                $h0 = trim($headerRow1[0], "\xEF\xBB\xBF \t\n\r\0\x0B");
+                $h1 = trim($headerRow1[1] ?? '');
+                
+                // Check if it's Sheet U: Starts with No,Date,Time
+                if ($h0 === 'No' && $h1 === 'Date') {
+                    $tableName = 'tire_test_data_u';
+                } 
+                // Check if it's Sheet D: Starts with multiple empties and has "Total Rank" around index 5
+                elseif (
+                    empty($h0) && empty($h1) && 
+                    (in_array('Total Rank', $headerRow1, true) || in_array('Total Rank ', $headerRow1, true) || in_array('"Total Rank"', $headerRow1, true))
+                ) {
+                    $tableName = 'tire_test_data_d';
+                }
+            }
+            
+            if (!$tableName) {
+                // Cannot detect format, skip this sheet
+                $skippedSheets[] = $extractedSheet;
+                continue;
+            }
+            
+            // Skip headers
+            $file->seek(2);
+            
+            $batch = [];
+            $batchSize = 250;
+            
+            // Get table columns and exclude id, timestamps
+            $dbColumns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
+            $dbColumns = array_values(array_filter($dbColumns, fn($c) => !in_array($c, ['id', 'created_at', 'updated_at'])));
+            $colCount = count($dbColumns);
+            
+            while (!$file->eof()) {
+                $row = $file->current();
+                if ($row && (count($row) > 1 || (count($row) === 1 && $row[0] !== null))) {
+                    // Match row length to dbColumns length
+                    if (count($row) > $colCount) {
+                        $row = array_slice($row, 0, $colCount);
+                    } elseif (count($row) < $colCount) {
+                        $row = array_pad($row, $colCount, null);
+                    }
+                    
+                    $data = array_combine($dbColumns, $row);
+                    $data['created_at'] = now();
+                    $data['updated_at'] = now();
+                    
+                    $batch[] = $data;
+                    $totalInserted++;
+                    
+                    if (count($batch) >= $batchSize) {
+                        \Illuminate\Support\Facades\DB::table($tableName)->insert($batch);
+                        $batch = [];
+                    }
+                }
+                $file->next();
+            }
+            
+            // Insert remaining rows
+            if (!empty($batch)) {
+                \Illuminate\Support\Facades\DB::table($tableName)->insert($batch);
+            }
         }
 
         $sheetNames = implode(', ', $selectedSheets);
-        return back()->with('success', "เตรียมนำเข้าข้อมูลจากชีต [{$sheetNames}] จำนวนรวม {$totalDataRows} แถว สำเร็จ! (พร้อมเขียนโค้ด Insert ลงตารางจริงในสเตปต่อไป)");
+        $message = "นำเข้าข้อมูลจากชีต [{$sheetNames}] จำนวนรวม {$totalInserted} แถว เข้าสู่ฐานข้อมูลจริงเรียบร้อยแล้ว! 🎉";
+        if (!empty($skippedSheets)) {
+            $skippedNames = implode(', ', $skippedSheets);
+            $message .= " (ข้ามชีตที่ฟอร์แมตไม่ถูกต้อง: {$skippedNames})";
+        }
+
+        return back()->with('success', $message);
     }
 }
