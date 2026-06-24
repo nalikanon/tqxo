@@ -26,7 +26,15 @@ class ExcelImportController extends Controller
 
         $limit = (int) $request->input('preview_limit', 100);
         $file = $request->file('excel_file');
-        
+        // Cleanup old CSV/XLSX files older than 15 minutes to save space
+        $files = Storage::disk('local')->files('uploads');
+        $now = time();
+        foreach ($files as $f) {
+            if ($now - Storage::disk('local')->lastModified($f) > 900) { // 900 seconds = 15 minutes
+                Storage::disk('local')->delete($f);
+            }
+        }
+
         $baseName = 'import_' . time();
         $xlsxName = $baseName . '.xlsx';
         $csvName = $baseName . '.csv';
@@ -42,8 +50,31 @@ class ExcelImportController extends Controller
             // Add UTF-8 BOM so Excel opens the CSV correctly if needed
             fputs($fp, chr(0xEF) . chr(0xBB) . chr(0xBF));
             
-            foreach ($xlsx->readRows() as $r) {
-                fputcsv($fp, $r);
+            $headerRow0 = null;
+            $headerRow1 = null;
+
+            foreach ($xlsx->sheetNames() as $sheetIndex => $sheetName) {
+                $rowIndex = 0;
+                foreach ($xlsx->readRows($sheetIndex) as $r) {
+                    // Keep track of the first sheet's headers
+                    if ($sheetIndex === 0) {
+                        if ($rowIndex === 0) $headerRow0 = $r;
+                        if ($rowIndex === 1) $headerRow1 = $r;
+                    } else {
+                        // For Sheet 2 onwards, if the first two rows are identical headers, skip them
+                        if ($rowIndex === 0 && $r === $headerRow0) {
+                            $rowIndex++;
+                            continue;
+                        }
+                        if ($rowIndex === 1 && $r === $headerRow1) {
+                            $rowIndex++;
+                            continue;
+                        }
+                    }
+                    
+                    fputcsv($fp, $r);
+                    $rowIndex++;
+                }
             }
             fclose($fp);
             
