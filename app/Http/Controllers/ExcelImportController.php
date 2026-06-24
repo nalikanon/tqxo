@@ -292,7 +292,7 @@ class ExcelImportController extends Controller
         }
 
         $sheetNames = implode(', ', $selectedSheets);
-        $message = "นำเข้าข้อมูลจากชีต [{$sheetNames}] จำนวนรวม {$totalInserted} แถว เข้าสู่ฐานข้อมูลจริงเรียบร้อยแล้ว! 🎉";
+        $message = "นำเข้าข้อมูลจากชีต [{$sheetNames}] จำนวนรวม {$totalInserted} แถว เข้าสู่ฐานข้อมูลจริงเรียบร้อยแล้ว!";
         if (!empty($skippedSheets)) {
             $skippedNames = implode(', ', $skippedSheets);
             $message .= " (ข้ามชีตที่ฟอร์แมตไม่ถูกต้อง: {$skippedNames})";
