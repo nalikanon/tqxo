@@ -275,8 +275,7 @@
 
     <div class="container">
         <header>
-            <h1>Fast Excel Importer</h1>
-            <p>อ่านไฟล์ขนาดใหญ่ในพริบตา พร้อมเลือกแถวที่ต้องการนำเข้า</p>
+            <h1>Excel Importer</h1>
         </header>
 
         @if($errors->any())
@@ -322,7 +321,7 @@
                 
                 <div class="loading-overlay" id="loadingOverlay">
                     <div class="spinner"></div>
-                    <p>กำลังเปิดไฟล์ด้วยความเร็วสูง...</p>
+                    <p>กำลังเปิดไฟล์...</p>
                 </div>
             </form>
         </div>
@@ -347,7 +346,6 @@
                 <!-- Action Bar -->
                 <div class="controls-bar" style="margin-top: 1rem; margin-bottom: 1rem;">
                     <div style="display: flex; gap: 1rem; align-items: center;">
-                        <h3 style="color: var(--text-main); margin: 0;">📤 นำเข้าข้อมูลยาง (Tire Uniformity/Balance)</h3>
                         <span style="color: var(--text-muted);">รวมทั้งหมด (เฉพาะชีตนี้): <strong style="color: var(--text-main);">{{ $total_data_rows ?? 0 }}</strong> แถว</span>
                     </div>
                     
@@ -368,7 +366,7 @@
 
                         <div>
                         <button type="button" class="btn btn-success" onclick="document.getElementById('importModal').style.display='flex'">
-                            นำเข้าข้อมูลลงฐานข้อมูลจริง
+                            นำเข้าข้อมูลลงฐานข้อมูล
                         </button>
                     </div>
                 </div>
