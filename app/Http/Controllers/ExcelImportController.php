@@ -145,7 +145,7 @@ class ExcelImportController extends Controller
         }
 
         return view('upload', [
-            'success' => "เปิดไฟล์ชีต {$currentSheet} เรียบร้อยแล้ว! (หน้าที่ {$page} จาก {$totalPages}) ⚡",
+            'success' => "เปิดไฟล์ชีต {$currentSheet} เรียบร้อยแล้ว! (หน้าที่ {$page} จาก {$totalPages}) ",
             'headers' => $headers,
             'rows' => $previewRows,
             'base_filename' => $base_filename,
