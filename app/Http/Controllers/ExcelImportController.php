@@ -51,7 +51,7 @@ class ExcelImportController extends Controller
             foreach ($xlsx->sheetNames() as $sheetIndex => $sheetName) {
                 // sanitize sheetname
                 $safeSheetName = preg_replace('/[^A-Za-z0-9\-\_]/', '_', $sheetName);
-                $csvName = $uniqueBase . '_C_' . $safeSheetName . '.csv';
+                $csvName = $uniqueBase . '_Sh_' . $safeSheetName . '.csv';
                 
                 $csvFullPath = Storage::disk('local')->path('uploads/' . $csvName);
                 $fp = fopen($csvFullPath, 'w');
@@ -86,9 +86,9 @@ class ExcelImportController extends Controller
         
         foreach ($allFiles as $f) {
             $fName = basename($f);
-            if (str_starts_with($fName, $base_filename . '_C_') && str_ends_with($fName, '.csv')) {
+            if (str_starts_with($fName, $base_filename . '_Sh_') && str_ends_with($fName, '.csv')) {
                 // Extract sheet name
-                $extractedSheet = str_replace([$base_filename . '_C_', '.csv'], '', $fName);
+                $extractedSheet = str_replace([$base_filename . '_Sh_', '.csv'], '', $fName);
                 $availableSheets[] = $extractedSheet;
                 
                 // Determine which CSV to load (default to first found if not specified)
@@ -177,8 +177,8 @@ class ExcelImportController extends Controller
         
         foreach ($allFiles as $f) {
             $fName = basename($f);
-            if (str_starts_with($fName, $baseFilename . '_C_') && str_ends_with($fName, '.csv')) {
-                $extractedSheet = str_replace([$baseFilename . '_C_', '.csv'], '', $fName);
+            if (str_starts_with($fName, $baseFilename . '_Sh_') && str_ends_with($fName, '.csv')) {
+                $extractedSheet = str_replace([$baseFilename . '_Sh_', '.csv'], '', $fName);
                 
                 // Only process files for the selected sheets
                 if (in_array($extractedSheet, $selectedSheets)) {
