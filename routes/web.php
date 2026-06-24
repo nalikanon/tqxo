@@ -10,5 +10,7 @@ Route::get('/', function () {
 
 Route::get('/upload', [ExcelImportController::class, 'index']);
 Route::post('/upload', [ExcelImportController::class, 'upload']);
+
 Route::get('/preview/{base_filename}', [ExcelImportController::class, 'preview'])->name('preview');
+
 Route::post('/import', [ExcelImportController::class, 'import']);
