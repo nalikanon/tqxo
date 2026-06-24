@@ -299,7 +299,7 @@
                 <div class="controls-bar" style="justify-content: center; margin-bottom: 1.5rem;">
                     <div>
                         <label for="previewLimit" style="color: var(--text-muted); margin-right: 0.5rem;">จำนวนแถวที่ต้องการแสดงตัวอย่าง:</label>
-                        <select name="limit" id="previewLimit" onchange="window.location.href='?limit=' + this.value + '&page=1'">
+                        <select name="limit" id="previewLimit" onchange="window.location.href='?limit=' + this.value + '&page=1&sheet={{ urlencode($current_sheet ?? '') }}'">
                             <option value="50" {{ (isset($preview_limit) && $preview_limit == 50) ? 'selected' : '' }}>50 แถว</option>
                             <option value="100" {{ (isset($preview_limit) && $preview_limit == 100) ? 'selected' : (!isset($preview_limit) ? 'selected' : '') }}>100 แถว</option>
                             <option value="200" {{ (isset($preview_limit) && $preview_limit == 200) ? 'selected' : '' }}>200 แถว</option>
@@ -327,70 +327,113 @@
             </form>
         </div>
 
-        @if(isset($rows) && count($rows) > 0)
-            <div class="card" style="padding: 1rem;">
-                <form action="/import" method="POST" id="importForm">
-                    @csrf
-                    <input type="hidden" name="file_path" value="{{ $file_path }}">
+        @if(isset($base_filename))
+            <div class="glass-card" style="margin-top: 2rem;">
+                <h2 style="color: var(--text-main); margin-bottom: 1.5rem; text-align: center;">ตัวอย่างข้อมูลจากไฟล์</h2>
+                
+                @if(isset($available_sheets) && count($available_sheets) > 1)
+                    <!-- Sheet Tabs -->
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; overflow-x: auto;">
+                        <span style="color: var(--text-muted); padding: 0.5rem 0;">เลือก Sheet:</span>
+                        @foreach($available_sheets as $sheet)
+                            <a href="{{ route('preview', ['base_filename' => $base_filename, 'limit' => $preview_limit, 'page' => 1, 'sheet' => $sheet]) }}" 
+                               class="btn" 
+                               style="padding: 0.5rem 1rem; border-radius: 4px; font-weight: bold; white-space: nowrap; {{ $current_sheet === $sheet ? 'background: var(--primary-color); color: white;' : 'background: rgba(255,255,255,0.05); color: var(--text-muted);' }}">
+                                {{ $sheet }}
+                            </a>
+                        @endforeach
+                    </div>
+                @endif
+                <!-- Action Bar -->
+                <div class="controls-bar" style="margin-top: 1rem; margin-bottom: 1rem;">
+                    <div style="display: flex; gap: 1rem; align-items: center;">
+                        <h3 style="color: var(--text-main); margin: 0;">📤 นำเข้าข้อมูลยาง (Tire Uniformity/Balance)</h3>
+                        <span style="color: var(--text-muted);">รวมทั้งหมด (เฉพาะชีตนี้): <strong style="color: var(--text-main);">{{ $total_data_rows ?? 0 }}</strong> แถว</span>
+                    </div>
                     
-                    <div class="controls-bar">
-                        <div style="display: flex; gap: 1rem; align-items: center;">
-                            <span style="color: var(--text-muted);">รวมทั้งหมด: <strong style="color: var(--text-main);">{{ $total_data_rows ?? 0 }}</strong> แถว</span>
-                        </div>
-                        
-                        <!-- Pagination Controls -->
+                    <!-- Pagination Controls -->
                         <div style="display: flex; gap: 0.5rem; align-items: center;">
-                            <a href="{{ isset($filename) ? route('preview', ['filename' => $filename, 'limit' => $preview_limit, 'page' => max(1, ($current_page ?? 1) - 1)]) : '#' }}" 
+                            <a href="{{ isset($base_filename) ? route('preview', ['base_filename' => $base_filename, 'sheet' => $current_sheet ?? '', 'limit' => $preview_limit, 'page' => max(1, ($current_page ?? 1) - 1)]) : '#' }}" 
                                class="btn" style="padding: 0.5rem 1rem; background: rgba(255,255,255,0.1); {{ ($current_page ?? 1) <= 1 ? 'pointer-events: none; opacity: 0.5;' : '' }}">
                                 &laquo; ก่อนหน้า
                             </a>
                             <span style="color: var(--text-muted); font-weight: bold; margin: 0 0.5rem;">
                                 หน้า {{ $current_page ?? 1 }} / {{ $total_pages ?? 1 }}
                             </span>
-                            <a href="{{ isset($filename) ? route('preview', ['filename' => $filename, 'limit' => $preview_limit, 'page' => ($current_page ?? 1) + 1]) : '#' }}" 
+                            <a href="{{ isset($base_filename) ? route('preview', ['base_filename' => $base_filename, 'sheet' => $current_sheet ?? '', 'limit' => $preview_limit, 'page' => ($current_page ?? 1) + 1]) : '#' }}" 
                                class="btn" style="padding: 0.5rem 1rem; background: rgba(255,255,255,0.1); {{ !($has_more ?? false) ? 'pointer-events: none; opacity: 0.5;' : '' }}">
                                 ถัดไป &raquo;
                             </a>
                         </div>
 
                         <div>
-                            <button type="submit" class="btn btn-success" id="importBtn">
-                                นำเข้าข้อมูลทั้งหมดลงฐานข้อมูลจริง
+                        <button type="button" class="btn btn-success" onclick="document.getElementById('importModal').style.display='flex'">
+                            นำเข้าข้อมูลลงฐานข้อมูลจริง
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                @if(isset($headers[0]))
+                                    @foreach($headers[0] as $index => $header)
+                                        <th>{{ $header ?: 'Col ' . ($index + 1) }}</th>
+                                    @endforeach
+                                @endif
+                            </tr>
+                            @if(isset($headers[1]) && !is_numeric($headers[1][0]) && $headers[1][0] === 'in')
+                                <tr>
+                                    @foreach($headers[1] as $subHeader)
+                                        <th>{{ $subHeader }}</th>
+                                    @endforeach
+                                </tr>
+                            @endif
+                        </thead>
+                        <tbody>
+                            @foreach($rows as $rowIndex => $rowData)
+                                <tr>
+                                    @foreach($rowData as $cell)
+                                        <td>{{ $cell }}</td>
+                                    @endforeach
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Import Modal -->
+            <div id="importModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; backdrop-filter: blur(5px);">
+                <div class="glass-card" style="width: 400px; max-width: 90%; background: var(--bg-card); padding: 2rem;">
+                    <h2 style="color: var(--text-main); margin-top: 0; margin-bottom: 1.5rem;">เลือก Sheet ที่ต้องการนำเข้า</h2>
+                    
+                    <form action="/import" method="POST">
+                        @csrf
+                        <input type="hidden" name="base_filename" value="{{ $base_filename }}">
+                        
+                        <div style="display: flex; flex-direction: column; gap: 0.8rem; margin-bottom: 2rem; max-height: 250px; overflow-y: auto;">
+                            @if(isset($available_sheets))
+                                @foreach($available_sheets as $sheet)
+                                    <label style="display: flex; align-items: center; gap: 0.8rem; color: var(--text-main); cursor: pointer; padding: 0.5rem; background: rgba(255,255,255,0.05); border-radius: 4px;">
+                                        <input type="checkbox" name="selected_sheets[]" value="{{ $sheet }}" checked style="width: 1.2rem; height: 1.2rem; cursor: pointer;">
+                                        <span style="font-size: 1.1rem;">{{ $sheet }}</span>
+                                    </label>
+                                @endforeach
+                            @endif
+                        </div>
+                        
+                        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                            <button type="button" class="btn" style="background: rgba(255,255,255,0.1);" onclick="document.getElementById('importModal').style.display='none'">
+                                ยกเลิก
+                            </button>
+                            <button type="submit" class="btn btn-success">
+                                ยืนยันการนำเข้า
                             </button>
                         </div>
-                    </div>
-                    
-                    <div class="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    @if(isset($headers[0]))
-                                        @foreach($headers[0] as $index => $header)
-                                            <th>{{ $header ?: 'Col ' . ($index + 1) }}</th>
-                                        @endforeach
-                                    @endif
-                                </tr>
-                                @if(isset($headers[1]) && !is_numeric($headers[1][0]) && $headers[1][0] === 'in')
-                                    <tr>
-                                        @foreach($headers[1] as $subHeader)
-                                            <th>{{ $subHeader }}</th>
-                                        @endforeach
-                                    </tr>
-                                @endif
-                            </thead>
-                            <tbody>
-                                @foreach($rows as $rowIndex => $rowData)
-                                    <tr>
-                                        @foreach($rowData as $cell)
-                                            <td>{{ $cell }}</td>
-                                        @endforeach
-                                    </tr>
-                                @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                </form>
-                
+                    </form>
+                </div>
             </div>
         @endif
     </div>

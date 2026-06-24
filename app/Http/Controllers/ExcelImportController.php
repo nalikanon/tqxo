@@ -26,6 +26,7 @@ class ExcelImportController extends Controller
 
         $limit = (int) $request->input('preview_limit', 100);
         $file = $request->file('excel_file');
+        
         // Cleanup old CSV/XLSX files older than 15 minutes to save space
         $files = Storage::disk('local')->files('uploads');
         $now = time();
@@ -35,69 +36,74 @@ class ExcelImportController extends Controller
             }
         }
 
-        $baseName = 'import_' . time();
-        $xlsxName = $baseName . '.xlsx';
-        $csvName = $baseName . '.csv';
+        $baseName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+        // Replace spaces or invalid chars with underscores to be safe for filenames
+        $baseName = preg_replace('/[^A-Za-z0-9\-\_]/', '_', $baseName);
+        $uniqueBase = $baseName . '_' . time();
         
+        $xlsxName = $uniqueBase . '.xlsx';
         $path = $file->storeAs('uploads', $xlsxName, 'local');
         $fullPath = Storage::disk('local')->path($path);
-        $csvFullPath = Storage::disk('local')->path('uploads/' . $csvName);
 
-        // Convert XLSX to CSV immediately
+        // Convert XLSX to CSV immediately, separating by sheet
         if ($xlsx = SimpleXLSX::parse($fullPath)) {
-            $fp = fopen($csvFullPath, 'w');
             
-            // Add UTF-8 BOM so Excel opens the CSV correctly if needed
-            fputs($fp, chr(0xEF) . chr(0xBB) . chr(0xBF));
-            
-            $headerRow0 = null;
-            $headerRow1 = null;
-
             foreach ($xlsx->sheetNames() as $sheetIndex => $sheetName) {
-                $rowIndex = 0;
+                // sanitize sheetname
+                $safeSheetName = preg_replace('/[^A-Za-z0-9\-\_]/', '_', $sheetName);
+                $csvName = $uniqueBase . '_C_' . $safeSheetName . '.csv';
+                
+                $csvFullPath = Storage::disk('local')->path('uploads/' . $csvName);
+                $fp = fopen($csvFullPath, 'w');
+                fputs($fp, chr(0xEF) . chr(0xBB) . chr(0xBF));
+                
                 foreach ($xlsx->readRows($sheetIndex) as $r) {
-                    // Keep track of the first sheet's headers
-                    if ($sheetIndex === 0) {
-                        if ($rowIndex === 0) $headerRow0 = $r;
-                        if ($rowIndex === 1) $headerRow1 = $r;
-                    } else {
-                        // For Sheet 2 onwards, if the first two rows are identical headers, skip them
-                        if ($rowIndex === 0 && $r === $headerRow0) {
-                            $rowIndex++;
-                            continue;
-                        }
-                        if ($rowIndex === 1 && $r === $headerRow1) {
-                            $rowIndex++;
-                            continue;
-                        }
-                    }
-                    
                     fputcsv($fp, $r);
-                    $rowIndex++;
                 }
+                fclose($fp);
             }
-            fclose($fp);
             
-            // Optionally delete the original XLSX to save space
+            // Delete the original XLSX to save space
             Storage::disk('local')->delete($path);
         } else {
             return back()->withErrors(['error' => 'ไม่สามารถอ่านไฟล์ Excel ได้: ' . SimpleXLSX::parseError()]);
         }
 
-        // Redirect to preview GET route with the limit parameter
-        return redirect()->route('preview', ['filename' => $csvName, 'limit' => $limit]);
+        // Redirect to preview GET route with the base filename
+        return redirect()->route('preview', ['base_filename' => $uniqueBase, 'limit' => $limit]);
     }
 
-    public function preview(Request $request, $filename)
+    public function preview(Request $request, $base_filename)
     {
         $limit = (int) $request->input('limit', 100);
         $page = (int) $request->input('page', 1);
-        $path = 'uploads/' . $filename;
+        $currentSheet = $request->input('sheet', '');
         
-        if (!Storage::disk('local')->exists($path)) {
-            return redirect('/upload')->withErrors(['error' => 'ไม่พบข้อมูลไฟล์ หรือไฟล์หมดอายุ']);
+        // Find all CSVs belonging to this base_filename
+        $allFiles = Storage::disk('local')->files('uploads');
+        $availableSheets = [];
+        $currentCsvName = '';
+        
+        foreach ($allFiles as $f) {
+            $fName = basename($f);
+            if (str_starts_with($fName, $base_filename . '_C_') && str_ends_with($fName, '.csv')) {
+                // Extract sheet name
+                $extractedSheet = str_replace([$base_filename . '_C_', '.csv'], '', $fName);
+                $availableSheets[] = $extractedSheet;
+                
+                // Determine which CSV to load (default to first found if not specified)
+                if ($currentSheet === $extractedSheet || ($currentSheet === '' && empty($currentCsvName))) {
+                    $currentCsvName = $fName;
+                    $currentSheet = $extractedSheet;
+                }
+            }
         }
-
+        
+        if (empty($currentCsvName)) {
+            return redirect('/upload')->withErrors(['error' => 'ไม่พบข้อมูลไฟล์ หรือไฟล์หมดอายุ (เกิน 15 นาที)']);
+        }
+        
+        $path = 'uploads/' . $currentCsvName;
         $csvFullPath = Storage::disk('local')->path($path);
         
         // Use SplFileObject for high-speed file reading
@@ -114,17 +120,6 @@ class ExcelImportController extends Controller
         if (!$file->eof()) $headers[] = $file->current();
 
         // Calculate total rows by seeking to the end of the file
-        $file->seek(PHP_INT_MAX);
-        $totalLines = $file->key();
-        
-        // Actual data rows = total lines - 2 header rows
-        $totalDataRows = max(0, $totalLines - 1); // $file->key() is 0-indexed line number of the last empty line, so minus 1 or 2 depending on trailing empty lines
-        
-        // A more reliable way to count lines for CSV:
-        $file->rewind();
-        $totalLines = 0;
-        // SplFileObject::seek(PHP_INT_MAX) is fast but sometimes gives slightly off counts. 
-        // Let's just use the max key.
         $file->seek(PHP_INT_MAX);
         $totalLines = $file->key();
         $totalDataRows = max(0, $totalLines - 2);
@@ -150,11 +145,12 @@ class ExcelImportController extends Controller
         }
 
         return view('upload', [
-            'success' => "ระบบอ่านข้อมูลจากไฟล์ CSV โดยตรง! (หน้าที่ {$page} จาก {$totalPages}) ลดภาระ Database 100% ⚡",
+            'success' => "เปิดไฟล์ชีต {$currentSheet} เรียบร้อยแล้ว! (หน้าที่ {$page} จาก {$totalPages}) ⚡",
             'headers' => $headers,
             'rows' => $previewRows,
-            'file_path' => $path,
-            'filename' => $filename,
+            'base_filename' => $base_filename,
+            'available_sheets' => $availableSheets,
+            'current_sheet' => $currentSheet,
             'preview_limit' => $limit,
             'current_page' => $page,
             'total_pages' => $totalPages,
@@ -165,22 +161,44 @@ class ExcelImportController extends Controller
 
     public function import(Request $request)
     {
-        $path = $request->input('file_path');
+        $baseFilename = $request->input('base_filename');
+        $selectedSheets = $request->input('selected_sheets', []);
         
-        if (!$path || !Storage::disk('local')->exists($path)) {
+        if (!$baseFilename) {
             return redirect('/upload')->withErrors(['error' => 'ไม่พบไฟล์ โปรดอัปโหลดใหม่']);
         }
 
-        $csvFullPath = Storage::disk('local')->path($path);
-        
-        $file = new SplFileObject($csvFullPath, 'r');
-        $file->seek(PHP_INT_MAX);
-        $totalDataRows = max(0, $file->key() - 2);
-
-        if ($totalDataRows <= 0) {
-            return back()->withErrors(['error' => 'ไม่พบข้อมูลให้ดำเนินการ หรือไฟล์ว่างเปล่า']);
+        if (empty($selectedSheets)) {
+            return back()->withErrors(['error' => 'กรุณาเลือกอย่างน้อย 1 Sheet เพื่อนำเข้าข้อมูล']);
         }
 
-        return back()->with('success', "เตรียมนำเข้าข้อมูลทั้งหมดจำนวน {$totalDataRows} แถว สำเร็จ! (เตรียมเขียนโค้ดเพื่อ Insert ลงตารางจริงในสเตปต่อไป)");
+        $allFiles = Storage::disk('local')->files('uploads');
+        $csvPaths = [];
+        
+        foreach ($allFiles as $f) {
+            $fName = basename($f);
+            if (str_starts_with($fName, $baseFilename . '_C_') && str_ends_with($fName, '.csv')) {
+                $extractedSheet = str_replace([$baseFilename . '_C_', '.csv'], '', $fName);
+                
+                // Only process files for the selected sheets
+                if (in_array($extractedSheet, $selectedSheets)) {
+                    $csvPaths[] = Storage::disk('local')->path($f);
+                }
+            }
+        }
+
+        if (empty($csvPaths)) {
+            return back()->withErrors(['error' => 'ไม่พบข้อมูลให้ดำเนินการ หรือไฟล์หมดอายุ']);
+        }
+
+        $totalDataRows = 0;
+        foreach ($csvPaths as $csvPath) {
+            $file = new SplFileObject($csvPath, 'r');
+            $file->seek(PHP_INT_MAX);
+            $totalDataRows += max(0, $file->key() - 2);
+        }
+
+        $sheetNames = implode(', ', $selectedSheets);
+        return back()->with('success', "เตรียมนำเข้าข้อมูลจากชีต [{$sheetNames}] จำนวนรวม {$totalDataRows} แถว สำเร็จ! (พร้อมเขียนโค้ด Insert ลงตารางจริงในสเตปต่อไป)");
     }
 }
