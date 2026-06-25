@@ -347,6 +347,15 @@
                 <div class="controls-bar" style="margin-top: 1rem; margin-bottom: 1rem;">
                     <div style="display: flex; gap: 1rem; align-items: center;">
                         <span style="color: var(--text-muted);">รวมทั้งหมด (เฉพาะชีตนี้): <strong style="color: var(--text-main);">{{ $total_data_rows ?? 0 }}</strong> แถว</span>
+                        
+                        @if(isset($current_sheet) && $current_sheet === 'D')
+                            <form action="/import" method="POST" style="margin: 0;">
+                                @csrf
+                                <input type="hidden" name="base_filename" value="{{ $base_filename }}">
+                                <input type="hidden" name="sheet" value="{{ $current_sheet }}">
+                                <button type="submit" class="btn btn-success" style="padding: 0.5rem 1rem; font-size: 0.9rem;" onclick="this.innerHTML='กำลังนำเข้า...'; this.disabled=true; this.form.submit();">นำเข้าฐานข้อมูล (Sheet D)</button>
+                            </form>
+                        @endif
                     </div>
                     
                     <!-- Pagination Controls -->
@@ -364,11 +373,7 @@
                             </a>
                         </div>
 
-                        <div>
-                        <button type="button" class="btn btn-success" onclick="document.getElementById('importModal').style.display='flex'">
-                            นำเข้าข้อมูลลงฐานข้อมูล
-                        </button>
-                    </div>
+
                 </div>
                 
                 <div class="table-container">
@@ -402,37 +407,7 @@
                 </div>
             </div>
 
-            <!-- Import Modal -->
-            <div id="importModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; backdrop-filter: blur(5px);">
-                <div class="glass-card" style="width: 400px; max-width: 90%; background: var(--bg-card); padding: 2rem;">
-                    <h2 style="color: var(--text-main); margin-top: 0; margin-bottom: 1.5rem;">เลือก Sheet ที่ต้องการนำเข้า</h2>
-                    
-                    <form action="/import" method="POST">
-                        @csrf
-                        <input type="hidden" name="base_filename" value="{{ $base_filename }}">
-                        
-                        <div style="display: flex; flex-direction: column; gap: 0.8rem; margin-bottom: 2rem; max-height: 250px; overflow-y: auto;">
-                            @if(isset($available_sheets))
-                                @foreach($available_sheets as $sheet)
-                                    <label style="display: flex; align-items: center; gap: 0.8rem; color: var(--text-main); cursor: pointer; padding: 0.5rem; background: rgba(255,255,255,0.05); border-radius: 4px;">
-                                        <input type="checkbox" name="selected_sheets[]" value="{{ $sheet }}" checked style="width: 1.2rem; height: 1.2rem; cursor: pointer;">
-                                        <span style="font-size: 1.1rem;">{{ $sheet }}</span>
-                                    </label>
-                                @endforeach
-                            @endif
-                        </div>
-                        
-                        <div style="display: flex; gap: 1rem; justify-content: flex-end;">
-                            <button type="button" class="btn" style="background: rgba(255,255,255,0.1);" onclick="document.getElementById('importModal').style.display='none'">
-                                ยกเลิก
-                            </button>
-                            <button type="submit" class="btn btn-success">
-                                ยืนยันการนำเข้า
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
+
         @endif
     </div>
 
