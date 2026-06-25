@@ -255,10 +255,26 @@ class ExcelImportController extends Controller
             $batch = [];
             $batchSize = 250;
             
-            // Get table columns and exclude id, timestamps
-            $dbColumns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
-            $dbColumns = array_values(array_filter($dbColumns, fn($c) => !in_array($c, ['id', 'created_at', 'updated_at'])));
+            // Get table columns and exclude timestamps only (do NOT exclude 'id' because it's in the Excel file)
+            $originalColumns = \Illuminate\Support\Facades\Schema::getColumnListing($tableName);
+            $hasCreatedAt = in_array('created_at', $originalColumns);
+            $hasUpdatedAt = in_array('updated_at', $originalColumns);
+            
+            $dbColumns = array_values(array_filter($originalColumns, fn($c) => !in_array($c, ['created_at', 'updated_at'])));
             $colCount = count($dbColumns);
+            
+            // Get column types to sanitize data
+            $columnsData = \Illuminate\Support\Facades\DB::select("SHOW COLUMNS FROM {$tableName}");
+            $numericColumns = [];
+            $dateColumns = [];
+            foreach ($columnsData as $col) {
+                $type = strtolower($col->Type);
+                if (str_contains($type, 'int') || str_contains($type, 'decimal') || str_contains($type, 'float') || str_contains($type, 'double')) {
+                    $numericColumns[] = $col->Field;
+                } elseif (str_contains($type, 'date') || str_contains($type, 'time')) {
+                    $dateColumns[] = $col->Field;
+                }
+            }
             
             while (!$file->eof()) {
                 $row = $file->current();
@@ -271,8 +287,37 @@ class ExcelImportController extends Controller
                     }
                     
                     $data = array_combine($dbColumns, $row);
-                    $data['created_at'] = now();
-                    $data['updated_at'] = now();
+                    
+                    // Sanitize data
+                    foreach ($data as $key => $value) {
+                        $strValue = trim((string)$value);
+                        if (in_array($key, $numericColumns)) {
+                            // Convert non-numeric (like 'A' or empty string) to null
+                            if ($strValue === '' || !is_numeric($strValue)) {
+                                $data[$key] = null;
+                            }
+                        } elseif (in_array($key, $dateColumns)) {
+                            // Convert 'A' or empty string to null, fix space and slash in dates
+                            if ($strValue === '' || $strValue === 'A') {
+                                $data[$key] = null;
+                            } else {
+                                $strValue = str_replace([' ', '/'], ['', '-'], $strValue);
+                                $data[$key] = $strValue;
+                            }
+                        } else {
+                            // Default string handling for empty values
+                            if ($strValue === '') {
+                                $data[$key] = null;
+                            }
+                        }
+                    }
+                    
+                    if ($hasCreatedAt) {
+                        $data['created_at'] = now();
+                    }
+                    if ($hasUpdatedAt) {
+                        $data['updated_at'] = now();
+                    }
                     
                     $batch[] = $data;
                     $totalInserted++;
