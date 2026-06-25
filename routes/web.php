@@ -14,3 +14,4 @@ Route::post('/upload', [ExcelImportController::class, 'upload']);
 Route::get('/preview/{base_filename}', [ExcelImportController::class, 'preview'])->name('preview');
 
 Route::post('/import', [ExcelImportController::class, 'import']);
+Route::post('/import-dynamic', [ExcelImportController::class, 'importDynamic']);

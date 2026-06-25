@@ -410,10 +410,25 @@
                                 <input type="hidden" name="sheet" value="{{ $current_sheet }}">
                                 <button type="submit" class="btn btn-success"
                                     style="padding: 0.5rem 1rem; font-size: 0.9rem;"
-                                    onclick="this.innerHTML='กำลังนำเข้า...'; this.disabled=true; this.form.submit();">นำเข้าฐานข้อมูล
+                                    onclick="this.innerHTML='กำลังนำเข้า...'; this.disabled=true; this.form.submit();">นำเข้าฐานข้อมูลแบบเฉพาะเจาะจง
                                     (Sheet {{ $current_sheet }})</button>
                             </form>
                         @endif
+                        
+                        <form action="/import-dynamic" method="POST" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
+                            @csrf
+                            <input type="hidden" name="base_filename" value="{{ $base_filename }}">
+                            <input type="hidden" name="sheet" value="{{ $current_sheet }}">
+                            <select name="header_row" style="background: rgba(15, 23, 42, 0.9); color: var(--text-main); border: 1px solid var(--border-color); padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.9rem;">
+                                <option value="1">หัวข้ออยู่แถวที่ 1</option>
+                                <option value="2">หัวข้ออยู่แถวที่ 2</option>
+                                <option value="merge_1_2" selected>รวมแถวที่ 1 และ 2 เป็นหัวข้อเดียว</option>
+                            </select>
+                            <button type="submit" class="btn btn-success"
+                                style="padding: 0.5rem 1rem; font-size: 0.9rem; background-color: #f59e0b;"
+                                onclick="this.innerHTML='กำลังสร้างตารางและนำเข้า...'; this.disabled=true; this.form.submit();">สร้างตารางอัตโนมัติและนำเข้า (Dynamic)
+                            </button>
+                        </form>
                     </div>
 
                     <!-- Pagination Controls -->

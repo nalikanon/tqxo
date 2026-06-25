@@ -135,6 +135,16 @@ class ExcelImportController extends Controller
         $file->next();
         if (!$file->eof()) $headers[] = $file->current();
 
+        // Process headers to fill empty slots
+        if (!empty($headers) && count($headers) > 0) {
+            $mainHeader = $headers[0];
+            foreach ($mainHeader as $index => $col) {
+                if (trim((string)$col) === '') {
+                    $headers[0][$index] = "Column_" . ($index + 1);
+                }
+            }
+        }
+
         // Count total data rows
         $file->seek(PHP_INT_MAX);
         $totalLines = $file->key() + 1;
@@ -208,6 +218,9 @@ class ExcelImportController extends Controller
      */
     private function importSheetD($base_filename)
     {
+        ini_set('memory_limit', '-1');
+        ini_set('max_execution_time', '600');
+
         $csvName = $base_filename . '_Sh_D.csv';
         if (!Storage::disk('local')->exists('uploads/' . $csvName)) {
             return back()->withErrors(['error' => 'CSV file for Sheet D not found.']);
@@ -314,6 +327,9 @@ class ExcelImportController extends Controller
      */
     private function importSheetU($base_filename)
     {
+        ini_set('memory_limit', '-1');
+        ini_set('max_execution_time', '600');
+
         $csvName = $base_filename . '_Sh_U.csv';
         if (!Storage::disk('local')->exists('uploads/' . $csvName)) {
             return back()->withErrors(['error' => 'CSV file for Sheet U not found.']);
@@ -452,6 +468,158 @@ class ExcelImportController extends Controller
             'page' => request('page', 1),
             'sheet' => 'U'
         ])->with('success', "นำเข้าข้อมูล Sheet U จำนวน {$importedCount} รายการ สำเร็จ!");
+    }
+
+    /**
+     * Dynamic Import: Creates table on the fly and imports data.
+     */
+    public function importDynamic(Request $request)
+    {
+        $base_filename = $request->input('base_filename');
+        $sheet = $request->input('sheet');
+
+        if (empty($base_filename) || empty($sheet)) {
+            return back()->withErrors(['error' => 'Invalid parameters for dynamic import.']);
+        }
+
+        ini_set('memory_limit', '-1');
+        ini_set('max_execution_time', '600');
+
+        $request->session()->save(); // Release session lock
+
+        $headerInput = $request->input('header_row', 'merge_1_2');
+        $isMerge = $headerInput === 'merge_1_2';
+        
+        $headerRowIndex = 1; // Default to row 2 for single
+        if (!$isMerge) {
+            $headerRowIndex = (int) $headerInput - 1; // 1-based to 0-based
+            if ($headerRowIndex < 0) $headerRowIndex = 0;
+        }
+
+        $csvName = $base_filename . '_Sh_' . $sheet . '.csv';
+        if (!Storage::disk('local')->exists('uploads/' . $csvName)) {
+            return back()->withErrors(['error' => 'CSV file not found.']);
+        }
+
+        $csvFullPath = Storage::disk('local')->path('uploads/' . $csvName);
+        $file = new \SplFileObject($csvFullPath, 'r');
+        $file->setFlags(\SplFileObject::READ_CSV | \SplFileObject::READ_AHEAD | \SplFileObject::SKIP_EMPTY | \SplFileObject::DROP_NEW_LINE);
+
+        $rawHeaders = [];
+        
+        if ($isMerge) {
+            // Read row 0
+            $file->seek(0);
+            $row0 = !$file->eof() ? $file->current() : [];
+            // Read row 1
+            $file->next();
+            $row1 = !$file->eof() ? $file->current() : [];
+            
+            // Merge them
+            $maxCols = max(count($row0), count($row1));
+            for ($i = 0; $i < $maxCols; $i++) {
+                $val0 = isset($row0[$i]) ? trim((string)$row0[$i]) : '';
+                $val1 = isset($row1[$i]) ? trim((string)$row1[$i]) : '';
+                
+                if ($val0 !== '' && $val1 !== '') {
+                    $rawHeaders[] = $val0 . '_' . $val1;
+                } else {
+                    $rawHeaders[] = $val0 . $val1; // One or both is empty
+                }
+            }
+            $dataStartIndex = 2;
+        } else {
+            // Read single header row
+            $file->seek($headerRowIndex);
+            if (!$file->eof()) {
+                $rawHeaders = $file->current();
+            }
+            $dataStartIndex = $headerRowIndex + 1;
+        }
+
+        if (empty($rawHeaders)) {
+            return back()->withErrors(['error' => 'CSV file is empty or missing headers.']);
+        }
+
+        // Clean headers and handle empty ones
+        $columns = [];
+        $dbColumns = [];
+        foreach ($rawHeaders as $index => $col) {
+            $colName = trim((string)$col);
+            if ($colName === '') {
+                $colName = 'Column_' . ($index + 1);
+            }
+            // Sanitize column name for MySQL (Support Thai and Unicode)
+            $safeName = preg_replace('/[^\p{L}\p{N}_]/u', '_', $colName);
+            $safeName = mb_strtolower($safeName, 'UTF-8');
+            
+            // If the whole name became underscores (e.g. special symbols only), give it a fallback
+            if (trim($safeName, '_') === '') {
+                $safeName = 'Column_' . ($index + 1);
+            }
+            // Ensure unique names
+            while (in_array($safeName, $dbColumns)) {
+                $safeName .= '_' . uniqid();
+            }
+            $dbColumns[] = $safeName;
+            $columns[$index] = $safeName;
+        }
+
+        $tableName = 'imported_' . strtolower(preg_replace('/[^A-Za-z0-9_]/', '_', $sheet)) . '_' . time();
+
+        // Create table dynamically
+        \Illuminate\Support\Facades\Schema::create($tableName, function (\Illuminate\Database\Schema\Blueprint $table) use ($dbColumns) {
+            $table->id();
+            foreach ($dbColumns as $colName) {
+                // Use text to safely hold any imported data
+                $table->text($colName)->nullable();
+            }
+            $table->timestamps();
+        });
+
+        // Skip header rows and import data
+        $file->seek($dataStartIndex);
+        
+        $batchSize = 100;
+        $batch = [];
+        $importedCount = 0;
+        $now = now();
+
+        while (!$file->eof()) {
+            $row = $file->current();
+            if (!empty($row) && (count($row) > 1 || (count($row) === 1 && $row[0] !== null))) {
+                
+                $mapped = [
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+
+                foreach ($columns as $index => $colName) {
+                    $mapped[$colName] = isset($row[$index]) ? $row[$index] : null;
+                }
+
+                $batch[] = $mapped;
+
+                if (count($batch) >= $batchSize) {
+                    \Illuminate\Support\Facades\DB::table($tableName)->insert($batch);
+                    $importedCount += count($batch);
+                    $batch = [];
+                }
+            }
+            $file->next();
+        }
+
+        if (count($batch) > 0) {
+            \Illuminate\Support\Facades\DB::table($tableName)->insert($batch);
+            $importedCount += count($batch);
+        }
+
+        return redirect()->route('preview', [
+            'base_filename' => $base_filename,
+            'limit' => request('limit', 100),
+            'page' => request('page', 1),
+            'sheet' => $sheet
+        ])->with('success', "นำเข้าข้อมูลไปยังตาราง {$tableName} จำนวน {$importedCount} รายการ สำเร็จ!");
     }
 
 }
