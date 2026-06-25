@@ -35,11 +35,14 @@ class ExcelImportController extends Controller
         $limit = (int) $request->input('preview_limit', 100);
         $file = $request->file('excel_file');
 
+        // Release session lock so other tabs/requests don't hang while this heavy process runs
+        $request->session()->save();
+
         // Cleanup old files older than 15 minutes
         $this->cleanupOldFiles();
 
         $baseName = preg_replace('/[^A-Za-z0-9\-\_]/', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
-        $uniqueBase = $baseName . '_' . time();
+        $uniqueBase = $baseName . '_' . uniqid();
 
         $xlsxName = $uniqueBase . '.xlsx';
         $path = $file->storeAs('uploads', $xlsxName, 'local');
@@ -185,6 +188,9 @@ class ExcelImportController extends Controller
         if (empty($base_filename) || empty($sheet)) {
             return back()->withErrors(['error' => 'Invalid parameters for import.']);
         }
+
+        // Release session lock so other tabs/requests don't hang while this heavy process runs
+        $request->session()->save();
 
         if ($sheet === 'D') {
             return $this->importSheetD($base_filename);
