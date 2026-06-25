@@ -565,7 +565,8 @@ class ExcelImportController extends Controller
             $columns[$index] = $safeName;
         }
 
-        $tableName = 'imported_' . strtolower(preg_replace('/[^A-Za-z0-9_]/', '_', $sheet)) . '_' . time();
+        $rawTableName = preg_replace('/[^A-Za-z0-9_]/', '_', $base_filename . '_' . $sheet);
+        $tableName = substr($rawTableName, 0, 64);
 
         // Create table dynamically
         \Illuminate\Support\Facades\Schema::create($tableName, function (\Illuminate\Database\Schema\Blueprint $table) use ($dbColumns) {
