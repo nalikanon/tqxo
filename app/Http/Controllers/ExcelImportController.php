@@ -367,7 +367,7 @@ class ExcelImportController extends Controller
                     'id'          => $id,
                     'test_date'   => $testDate,
                     'test_time'   => trim($row[2] ?? ''),
-                    'shift'       => trim($row[3] ?? ''),
+                    // 'shift'       => trim($row[3] ?? ''),
                     'model_no'    => trim($row[4] ?? ''),
                     'size_code'   => trim($row[5] ?? ''),
                     'barcode'     => trim($row[6] ?? ''),
