@@ -286,7 +286,7 @@ class ExcelImportController extends Controller
                 ];
 
                 if (count($batch) >= $batchSize) {
-                    TireTestDataD::insert($batch);
+                    TireTestDataD::insertOrIgnore($batch);
                     $importedCount += count($batch);
                     $batch = [];
                 }
@@ -296,7 +296,7 @@ class ExcelImportController extends Controller
 
         // Insert remaining
         if (count($batch) > 0) {
-            TireTestDataD::insert($batch);
+            TireTestDataD::insertOrIgnore($batch);
             $importedCount += count($batch);
         }
 
@@ -449,7 +449,7 @@ class ExcelImportController extends Controller
                 $batch[] = $mapped;
 
                 if (count($batch) >= $batchSize) {
-                    \App\Models\TireTestDataU::insert($batch);
+                    \App\Models\TireTestDataU::insertOrIgnore($batch);
                     $importedCount += count($batch);
                     $batch = [];
                 }
@@ -458,7 +458,7 @@ class ExcelImportController extends Controller
         }
 
         if (count($batch) > 0) {
-            \App\Models\TireTestDataU::insert($batch);
+            \App\Models\TireTestDataU::insertOrIgnore($batch);
             $importedCount += count($batch);
         }
 
@@ -541,12 +541,45 @@ class ExcelImportController extends Controller
             return back()->withErrors(['error' => 'CSV file is empty or missing headers.']);
         }
 
+        // Find columns with empty headers
+        $emptyHeaderIndices = [];
+        foreach ($rawHeaders as $index => $col) {
+            if (trim((string)$col) === '') {
+                $emptyHeaderIndices[] = $index;
+            }
+        }
+
+        $nonEmptyColumns = []; // For empty headers, track if they have data
+        
+        if (!empty($emptyHeaderIndices)) {
+            $file->seek($dataStartIndex);
+            while (!$file->eof()) {
+                $row = $file->current();
+                if (!empty($row) && (count($row) > 1 || (count($row) === 1 && $row[0] !== null))) {
+                    foreach ($emptyHeaderIndices as $k => $idx) {
+                        if (isset($row[$idx]) && trim((string)$row[$idx]) !== '') {
+                            $nonEmptyColumns[$idx] = true;
+                            unset($emptyHeaderIndices[$k]);
+                        }
+                    }
+                    if (empty($emptyHeaderIndices)) {
+                        break;
+                    }
+                }
+                $file->next();
+            }
+        }
+
         // Clean headers and handle empty ones
         $columns = [];
         $dbColumns = [];
         foreach ($rawHeaders as $index => $col) {
             $colName = trim((string)$col);
             if ($colName === '') {
+                if (!isset($nonEmptyColumns[$index])) {
+                    // Header is empty and all data rows for this column are empty, skip it
+                    continue;
+                }
                 $colName = 'Column_' . ($index + 1);
             }
             // Sanitize column name for MySQL (Support Thai and Unicode)
@@ -555,7 +588,7 @@ class ExcelImportController extends Controller
             
             // If the whole name became underscores (e.g. special symbols only), give it a fallback
             if (trim($safeName, '_') === '') {
-                $safeName = 'Column_' . ($index + 1);
+                $safeName = 'column_' . ($index + 1);
             }
             // Ensure unique names
             while (in_array($safeName, $dbColumns)) {
